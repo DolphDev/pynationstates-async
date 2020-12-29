@@ -4,7 +4,7 @@ from .objects import Nation, Region, World, WorldAssembly, Telegram, Cards, Indi
 class Nationstates:
 
     def __init__(self, user_agent, version="11", ratelimit_sleep=True,
-                ratelimit_limit=10, ratelimit_timeframe=30, ratelimit_sleep_time=4,
+                ratelimit_limit=40, ratelimit_timeframe=30, ratelimit_sleep_time=4,
                 ratelimit_maxsleeps=10, ratelimit_enabled=True, do_retry=True, 
                 retry_sleep=5, max_retries=5, use_nsdict=True, use_session=True,
                 one_request_at_a_time=False):

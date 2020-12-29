@@ -6,6 +6,7 @@ from .objects import RateLimit, NationAPI, PrivateNationAPI, RegionAPI, WorldAPI
 from .utils import sleep_thread
 
 import asyncio
+import aiohttp
 
 class Api:
     def __init__(self, user_agent, version='11',
@@ -27,8 +28,9 @@ class Api:
         self.ratelimit_within = ratelimit_within
         self.max_safe_requests = max_safe_requests
         self.ratelimit_enabled = ratelimit_enabled
-        self.use_session = use_session
+        self.use_session = False
         if use_session:
+            # Todo remove session usage
             self.session = None
         else:
             self.session = None
@@ -37,15 +39,18 @@ class Api:
         self.ratelimit_lock = asyncio.Lock()
         self.limit_request = limit_request
 
+    async def get_xrls(self):
+        return await self.rlobj.get_xrls_timestamp()
+
     async def rate_limit(self, new_xrls=1):
         # Raises an exception if RateLimit is either banned 
         async with self.ratelimit_lock:
-            self.xrls = int(new_xrls)
-            print(self.xrls)
+            await self.rlobj.add_xrls_timestamp(new_xrls)
 
     async def _check_ratelimit(self):
-        server_xrls = self.xrls
+        server_xrls = await self.get_xrls()
         local_xrls = await self.rlobj.calculate_internal_xrls()
+        print('Server:', server_xrls, 'Local', local_xrls)
         xrls = max(server_xrls, local_xrls) if not self.limit_request else server_xrls
         return await self.rlobj.ratelimitcheck(xrls=self.xrls,
                 amount_allow=self.ratelimit_max,
@@ -56,7 +61,6 @@ class Api:
         async with self.ratelimit_lock:
             rlflag = await self._check_ratelimit()
             if not self.ratelimit_enabled:
-                print('HERE 1')
                 return True
             if not rlflag:
                 if self.ratelimitsleep:
@@ -67,16 +71,12 @@ class Api:
                             if self.max_safe_requests > self.ratelimit_max:
                                 break
                             else:
-                                print('HERE 2')
                                 return True
-                        print('HERE 3')
                         await sleep_thread(self.ratelimitsleep_time)
                     else:
-                        print('HERE 4')
                         return True
                 raise RateLimitReached("The Rate Limit was too close the API limit to safely handle this request")
             else:
-                print('here 5')
                 return True
 
     def Nation(self, name):

@@ -7,8 +7,9 @@ from time import sleep
 from functools import wraps
 
 from .exceptions import ConflictError, InternalServerError, CloudflareServerError, APIUsageError, NotAuthenticated
-from requests.exceptions import ConnectionError
 from .info import nation_shards, region_shards, world_shards, wa_shards, individual_cards_shards
+
+import aiohttp
 
 # Some Lines may have # pragma: no cover to specify to ignore coverage misses here
 # Mostly due to it not being pratical for those methods to be automatically tested
@@ -142,11 +143,11 @@ class API_WRAPPER:
             except TypeError:
                 return resp
 
-    def _request(self, shards):
-        return self.current_api.request(shards=shards)
+    async def _request(self, shards):
+        return await self.current_api.request(shards=shards)
 
-    def _request_post(self, shards): 
-        return self.current_api.post(shards=shards)
+    async def _request_post(self, shards): 
+        return await self.current_api.post(shards=shards)
 
     def _get_shard(self, shard):
         """Dynamically Builds methods to query shard with proper with arg and kwargs support"""
@@ -164,8 +165,7 @@ class API_WRAPPER:
         """
         try:
             if use_post:
-                raise NotImplemented
-                resp = self._request_post(shards)
+                resp = await self._request_post(shards)
             else:
                 resp = await self._request(shards)
 
@@ -173,7 +173,7 @@ class API_WRAPPER:
                 return (self._parser(resp, full_response), True)
             else:
                 return self._parser(resp, full_response)
-        except (ConflictError, CloudflareServerError, InternalServerError, ConnectionResetError, ConnectionError) as exc:
+        except (ConflictError, CloudflareServerError, InternalServerError, aiohttp.client_exceptions.ServerDisconnectedError) as exc:
             # The Retry system
             if return_status_tuple:
                 return (None, False)
