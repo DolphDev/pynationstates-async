@@ -1,5 +1,5 @@
 beautifulsoup4==4.9.3
 ezurl==0.1.3.25
-aiohttp==2.25.*
+aiohttp==3.7.*
 xmltodict==0.12.0
 

@@ -3,6 +3,8 @@ from time import sleep
 from xmltodict import parse
 import asyncio
 
+SleepRequestsLock = asyncio.Lock()
+
 def _parsedict(x, dicttype):
     """
     This function recursively loops through the processed xml (now dicttype)
@@ -36,5 +38,4 @@ async def sleep_thread(n):
     """All Sleep code will be in here, to allow uniform behavior
      if changes are needed"""
     # Currently we just python's built in sleep library """
-    print('tried to sleep')
     await asyncio.sleep(n)

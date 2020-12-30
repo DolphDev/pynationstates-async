@@ -111,20 +111,26 @@ class API_WRAPPER:
         # To prevent useless requests for shards that may not exist
         # Each API object will include supported shards
         if attr in self.auto_shards:
-            resp = self.get_shards(attr)
-            return resp[attr]
+            async def _auto_s():
+                resp = await self.get_shards(attr)
+                return resp[attr]
+            return _auto_s()
+            
         elif attr in self._get_shard_:
-            resp = self._get_shard(attr[4:])
-            return resp
+            async def _auto_s():
+                resp = self._get_shard(attr[4:])
+                return resp
+            return _auto_s()
+
 
         else:
             # Implement Default Behavior
             raise AttributeError('\'{}\' has no attribute \'{}\''.format(
                 type(self), attr))
 
-    def _auto_shard(self, attr):
+    async def _auto_shard(self, attr):
         if attr in self.auto_shards:
-            resp = self.get_shards(attr)
+            resp = await self.get_shards(attr)
             return resp[attr]
         else:
             raise ValueError("{} is not a supported auto shard".format(attr))
@@ -151,11 +157,10 @@ class API_WRAPPER:
 
     def _get_shard(self, shard):
         """Dynamically Builds methods to query shard with proper with arg and kwargs support"""
-        raise NotImplemented
         @wraps(API_WRAPPER._get_shard)
-        def get_shard(full_response=False, *arg, **kwargs):
+        async def get_shard(full_response=False, *arg, **kwargs):
             """Gets the shard '{}'""".format(shard)
-            return self.get_shards(Shard(shard, *arg, **kwargs), full_response=full_response)
+            return await self.get_shards(Shard(shard, *arg, **kwargs), full_response=full_response)
         return get_shard
 
     async def request(self, shards, full_response, return_status_tuple=False, use_post=False):
@@ -194,8 +199,7 @@ class API_WRAPPER:
     async def __get_shards__(self, *args, full_response=False, use_post=False):
         """Get Shards, internal implementation"""
         if use_post:
-            raise NotImplemented
-            resp = self.request(shards=args, full_response=full_response, use_post=True)
+            resp = await self.request(shards=args, full_response=full_response, use_post=True)
             return resp         
         else:
             resp = await self.request(shards=args, full_response=full_response, use_post=False)
@@ -207,7 +211,6 @@ class API_WRAPPER:
 
     def command(self, command, full_response=False, use_post=False, **kwargs): # pragma: no cover
         """Method Interface to the command API for Nationstates"""
-        raise NotImplemented
         if not kwargs:
             raise ValueError('Command requires keyword arguments')
         command = Shard(c=command)
@@ -255,9 +258,9 @@ class Nation(API_WRAPPER):
         self._set_apiwrapper(self._determine_api(self.nation_name, password, autologin))
         return self
 
-    def pick_issue(self, issue_id, option, full_response=False, raise_exception_if_fail=True):
+    async def pick_issue(self, issue_id, option, full_response=False, raise_exception_if_fail=True):
         self._check_auth()
-        resp =  self.command("issue", issue=issue_id, option=option, full_response=True)
+        resp =  await self.command("issue", issue=issue_id, option=option, full_response=True)
         try:
             if not raise_exception_if_fail:
                 raise KeyError
@@ -270,13 +273,13 @@ class Nation(API_WRAPPER):
             else:
                 return resp["data"][self.api_name]
 
-    def _dispatch(self, dispatch, use_exception=True, **kwargs):
+    async def _dispatch(self, dispatch, use_exception=True, **kwargs):
         self._check_auth()
-        token_resp = self.command('dispatch', dispatch=dispatch, mode='prepare', nation=self.nation_name, full_response=True, use_post=True, **kwargs)
+        token_resp = await self.command('dispatch', dispatch=dispatch, mode='prepare', nation=self.nation_name, full_response=True, use_post=True, **kwargs)
         token = dispatch_token(token_resp, use_exception)
         if use_exception is False and token is False:
             return False
-        final_resp =  self.command('dispatch', dispatch=dispatch, mode='execute', token=token, nation=self.nation_name, full_response=True, use_post=True, **kwargs)
+        final_resp =  await self.command('dispatch', dispatch=dispatch, mode='execute', token=token, nation=self.nation_name, full_response=True, use_post=True, **kwargs)
         check = dispatch_error_check(final_resp, use_exception)
         # Check was False - we need to return False down the line
         if not check:
@@ -285,10 +288,10 @@ class Nation(API_WRAPPER):
             return final_resp
         
 
-    def create_dispatch(self, title=None, text=None, category=None, subcategory=None, full_response=False, use_exception=True):
+    async def create_dispatch(self, title=None, text=None, category=None, subcategory=None, full_response=False, use_exception=True):
         cant_be_none(title=title, text=text, category=category, subcategory=subcategory)
 
-        final_resp =  self._dispatch('add', title=title, text=text, 
+        final_resp =  await self._dispatch('add', title=title, text=text, 
                                     category=category, subcategory=subcategory, use_exception=use_exception)
 
         if final_resp is False:
@@ -298,10 +301,10 @@ class Nation(API_WRAPPER):
         else:
             return final_resp['data'][self.api_name]
 
-    def edit_dispatch(self, dispatch_id=None, title=None, text=None, category=None, subcategory=None, full_response=False, use_exception=True):
+    async def edit_dispatch(self, dispatch_id=None, title=None, text=None, category=None, subcategory=None, full_response=False, use_exception=True):
         cant_be_none(dispatch_id=dispatch_id, title=title, text=text, category=category, subcategory=subcategory)
 
-        final_resp =  self._dispatch('edit', dispatchid=dispatch_id, title=title, text=text, 
+        final_resp =  await self._dispatch('edit', dispatchid=dispatch_id, title=title, text=text, 
                                     category=category, subcategory=subcategory, use_exception=use_exception)
 
         if final_resp is False:
@@ -311,10 +314,10 @@ class Nation(API_WRAPPER):
         else:
             return final_resp['data'][self.api_name]
 
-    def remove_dispatch(self, dispatch_id=None, use_exception=False, full_response=False): 
+    async def remove_dispatch(self, dispatch_id=None, use_exception=True, full_response=False): 
         cant_be_none(dispatch_id=dispatch_id)
 
-        final_resp =  self._dispatch('remove', dispatchid=dispatch_id, use_exception=use_exception)
+        final_resp =  await self._dispatch('remove', dispatchid=dispatch_id, use_exception=use_exception)
 
         if final_resp is False:
             return False
@@ -323,7 +326,7 @@ class Nation(API_WRAPPER):
         else:
             return final_resp['data'][self.api_name]
 
-    def send_telegram(self, telegram=None, client_key=None, tgid=None, key=None):
+    async def send_telegram(self, telegram=None, client_key=None, tgid=None, key=None):
         """Sends Telegram. Can either provide a telegram directly, or provide the api details and created internally
         """
         try:
@@ -335,20 +338,20 @@ class Nation(API_WRAPPER):
             pass
         else:
             telegram = self.api_mother.telegram(client_key, tgid, key)
-        telegram.send_telegram(self.nation_name)
+        await telegram.send_telegram(self.nation_name)
 
-    def verify(self, checksum=None, token=None):
+    async def verify(self, checksum=None, token=None):
         """Wraps around the verify API"""
         cant_be_none(checksum=checksum, token=token)
         payload = {"checksum":checksum, "a":"verify"}
         if token:
             payload.update({"token":token})
-        return self.get_shards(Shard(**payload), full_response=True)
+        return await self.get_shards(Shard(**payload), full_response=True)
 
     @property
-    def region(self):
+    async def region(self):
         """Returns the region, result is :class:`Region`"""
-        resp = self.api_mother.region(self._auto_shard("region"))
+        resp = self.api_mother.region(await self._auto_shard("region"))
         return resp
 
 class Region(API_WRAPPER):
@@ -372,8 +375,8 @@ class Region(API_WRAPPER):
             hexloc=hex(id(self)).upper().replace("X", "x"))
 
     @property
-    def nations(self):
-        resp = self._auto_shard("nations")
+    async def nations(self):
+        resp = await self._auto_shard("nations")
         return tuple(self.api_mother.nation(x) for x in resp.split(":"))
     
 class World(API_WRAPPER):
@@ -389,13 +392,13 @@ class World(API_WRAPPER):
         return self.api.World()
 
     @property
-    def nations(self):
-        resp = self._auto_shard("nations")
+    async def nations(self):
+        resp = await self._auto_shard("nations")
         return tuple(self.api_mother.nation(x) for x in resp.split(","))
 
     @property
-    def regions(self):
-        resp = self._auto_shard("regions")
+    async def regions(self):
+        resp = await self._auto_shard("regions")
         return tuple(self.api_mother.region(x) for x in resp.split(","))
 
 class WorldAssembly(API_WRAPPER):
@@ -442,12 +445,12 @@ class Telegram(API_WRAPPER):
     def _determine_api(self):
         return self.api.Telegram(self.__clientkey__, self.__tgid__, self.__key__)
 
-    def send_telegram(self, nation, full_response=False):
+    async def send_telegram(self, nation, full_response=False):
         if isinstance(nation, Nation):
             nation_str = nation.nation_name
         else:
             nation_str = nation
-        return self.request(Shard(to=nation_str), full_response)
+        return await self.request(Shard(to=nation_str), full_response)
 
 
 class Cards(API_WRAPPER):

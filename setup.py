@@ -26,18 +26,18 @@ SOFTWARE.
 """
 
 
-version = '3.0.1.6'
+version = '0.0.1'
 
 from setuptools import setup
-setup(name='nationstates',
+setup(name='nationstates-async',
       install_requires=["beautifulsoup4==4.9.3", "ezurl==0.1.3.25",
-                        "requests==2.25.*", "xmltodict==0.12.0" ],
+                        "aiohttp==3.7.*", "xmltodict==0.12.0" ],
       version=version,
       description='Nationstates API wrapper for python',
       author='Joshua W',
       author_email='dolphdevgithub@gmail.com',
       url='https://github.com/DolphDev/pynationstates',
-      packages=['nationstates', 'nationstates.nsapiwrapper'],
+      packages=['nationstates_async', 'nationstates_async.nsapiwrapper'],
       package_data={'': ['LICENSE.txt', "readme.md"]},
       download_url='https://github.com/DolphDev/pynationstates/releases/tag/'+version,
       keywords=['nationstates', 'api wrapper', 'api',

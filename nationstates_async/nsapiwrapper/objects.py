@@ -64,16 +64,20 @@ def within(number, value, window):
     return (value < (number+window)) and (value > (number-window))
 
 def find_xrls(rlref, window=2):
-    highest_value = rlref[0][1]
-    latest = rlref[0]
-    for row in rlref[1:]:
+    highest_value = rlref[-1]
+    latest = rlref[-1]
+    for row in rlref:
+        if row is latest:
+            continue
         if not within(latest[0], row[0], window):
             continue
-        if row[1] > highest_value:
-            highest_value = row[1]
+        if row[1] > highest_value[1]:
+            highest_value = row
     return highest_value
 
-
+# Rate limit isn't actually io-bound, but it has locks
+# To prevent out of order execution
+# Since this is basically the same code as in the main module
 class RateLimit:
 
     """
@@ -100,7 +104,6 @@ class RateLimit:
             Side Effects: Also calls .cleanup() when returning True
         """
         async with Lock.RateLimitStateEditLock:
-            print(amount_allow, xrls)
             if xrls >= amount_allow:
                 pre_raf = xrls - (xrls - len(self.rltime))
                 currenttime = timestamp()
@@ -146,11 +149,10 @@ class RateLimit:
             #List is empty, pass
             pass
 
-    async def calculate_internal_xrls(self):
+    async def _calculate_internal_xrls(self):
         # may only be called by ratelimitcheck
-        async with Lock.RateLimitStateEditLock:
-            self.cleanup()
-            return len(self.rltime)
+        self.cleanup()
+        return len(self.rltime)
 
     async def add_timestamp(self):
         """Adds timestamp to rltime"""
@@ -162,13 +164,26 @@ class RateLimit:
         async with Lock.RateLimitStateEditLock:
             self.rlxrls = [(timestamp(), int(xrls))] + self.rlxrls
 
-    async def get_xrls_timestamp(self):
+    async def _get_xrls_timestamp(self):
+        timestamp_sorted = sorted(self.rlxrls, key=lambda x: x[0])
+        if len(timestamp_sorted) == 0:
+            return (0, 0)
+        return find_xrls(timestamp_sorted)
+
+    async def get_xrls_timestamp_final(self):
         async with Lock.RateLimitStateEditLock:
+            server_xrls = await self._get_xrls_timestamp()
+            local_xrls = await self._calculate_internal_xrls()
+            if server_xrls[0] > local_xrls:
+                # We have to calculate the current xrls now
+                return server_xrls[1] + len(tuple(filter(lambda x: x > server_xrls[0], self.rltime)))
+            else:
+                return local_xrls
+
             timestamp_sorted = sorted(self.rlxrls, key=lambda x: x[0])
             if len(timestamp_sorted) == 0:
                 return 0
             return find_xrls(timestamp_sorted)
-
 
 
 
@@ -216,7 +231,7 @@ class NationstatesAPI:
     async def _request_wrap_post(self, url, headers, data):
         _session = self.api_mother.session if self.api_mother.use_session else aiohttp.ClientSession()
         async with _session as session:
-            async with session.get(url, headers=headers) as response:
+            async with session.post(url, headers=headers, data=data) as response:
                 return APIResponse(response.status, await response.text(), response.headers, response)
 
     async def _request_wrap_get(self, url, headers):
@@ -237,7 +252,7 @@ class NationstatesAPI:
             headers.update(req.custom_headers)
             sess = self.api_mother.session if  self.api_mother.use_session else requests
             if req.use_post:
-                resp =  await self._request_wrap_get(req.url, headers, req.post_data)
+                resp =  await self._request_wrap_post(req.url, headers, req.post_data)
                 return resp
             else:
                 resp =  await self._request_wrap_get(req.url, headers)
@@ -245,6 +260,7 @@ class NationstatesAPI:
 
 
     async def _handle_request(self, response, request_meta):
+        # mark for refactor, i don't think any locking is needed here
         async with Lock.HandleResponseLock:
             is_text = ""
             result = {
@@ -258,7 +274,6 @@ class NationstatesAPI:
 
             await self.api_mother.rate_limit(new_xrls=response.headers["X-ratelimit-requests-seen"])
            
-            # Should this be here? Perhaps an argument to disable it
             response_check(result)
 
             return result
@@ -271,24 +286,26 @@ class NationstatesAPI:
 
     async def _request(self, shards, url, api_name, value_name, version, request_headers=None):
         # This relies on .url() being defined by child classes
-        url = self.url(shards)
-        req = self._prepare_request(url, 
-                api_name,
-                value_name,
-                shards, version, request_headers, False, None)
-        resp = await self._request_api(req)
-        result = await self._handle_request(resp, req)
-        return result
+        async with self.api_mother:
+            url = self.url(shards)
+            req = self._prepare_request(url, 
+                    api_name,
+                    value_name,
+                    shards, version, request_headers, False, None)
+            resp = await self._request_api(req)
+            result = await self._handle_request(resp, req)
+            return result
 
     async def _request_post(self, shards, url, api_name, value_name, version, post_data, request_headers=None):
         # This relies on .url() being defined by child classes
-        req = self._prepare_request(url, 
-                api_name,
-                value_name,
-                shards, version, request_headers, True, post_data)
-        resp = await self._request_api(req)
-        result = await self._handle_request(resp, req)
-        return result
+        async with self.api_mother:
+            req = self._prepare_request(url, 
+                    api_name,
+                    value_name,
+                    shards, version, request_headers, True, post_data)
+            resp = await self._request_api(req)
+            result = await self._handle_request(resp, req)
+            return result
 
     def _default_shards(self):
         return None
@@ -306,8 +323,9 @@ class NationstatesAPI:
     def post_url(self):
         return API_URL
 
-    def post(self, *arg, **kwargs):
+    async def post(self, *arg, **kwargs):
         raise NotImplemented("{} hasn't implemented post requests".format())
+        await None
 
 class NationAPI(NationstatesAPI):
     api_name = "nation"
@@ -357,25 +375,26 @@ class PrivateNationAPI(NationAPI):
         await self._setup_pin(response)
         return response
 
-    def post(self, shards=[]):
+    async def post(self, shards=[]):
         pin_used = bool(self.pin)
-        custom_headers = self._get_pin_headers() 
+        custom_headers = await self._get_pin_headers() 
         url = self.post_url()
         post_data = shard_object_extract(shards)
         try:
-            response = self._request_post(shards, url, self.api_name, self.nation_name, self.api_mother.version, post_data, request_headers=custom_headers)
+            response = await self._request_post(shards, url, self.api_name, self.nation_name, self.api_mother.version, post_data, request_headers=custom_headers)
         except Forbidden as exc:
             # PIN is wrong or login is wrong
             if pin_used:
                 self.pin = None
-                return self.post(shards=shards)
+                return await self.post(shards=shards)
             else:
                 raise exc            
-        self._setup_pin(response)
+        await self._setup_pin(response)
         return response
 
     async def _get_pin_headers(self):
         """Process Login data to give to the request"""
+        # mark for refactor, i don't think any locking is needed here
         async with self.lock:
             if self.pin:
                 custom_headers={"Pin": self.pin}
@@ -388,6 +407,7 @@ class PrivateNationAPI(NationAPI):
 
     async def _setup_pin(self, response):
         # sets up pin
+        # mark for refactor, i don't think any locking is needed here
         async with self.lock:
             if self.password or self.autologin or self.pin:
                 headers = response["headers"]

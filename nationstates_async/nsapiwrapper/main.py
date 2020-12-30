@@ -1,7 +1,7 @@
 from requests import Session
 from .objects import RateLimit, NationAPI, RegionAPI, WorldAPI, WorldAssemblyAPI, TelegramAPI
 from .exceptions import RateLimitReached
-from .info import max_safe_requests, ratelimit_max, ratelimit_within, ratelimit_maxsleeps, ratelimit_sleep_time
+from .info import max_safe_requests, ratelimit_max, ratelimit_within, ratelimit_maxsleeps, ratelimit_sleep_time, max_ongoing_requests
 from .objects import RateLimit, NationAPI, PrivateNationAPI, RegionAPI, WorldAPI, WorldAssemblyAPI, CardsAPI
 from .utils import sleep_thread
 
@@ -18,7 +18,8 @@ class Api:
         max_safe_requests=max_safe_requests,
         ratelimit_enabled=True,
         use_session=True,
-        limit_request=True):
+        limit_request=True,
+        max_ongoing_requests=max_ongoing_requests):
         self.user_agent = user_agent
         self.version = version
         self.ratelimitsleep = ratelimit_sleep
@@ -28,6 +29,7 @@ class Api:
         self.ratelimit_within = ratelimit_within
         self.max_safe_requests = max_safe_requests
         self.ratelimit_enabled = ratelimit_enabled
+        self.max_ongoing_requests = max_ongoing_requests
         self.use_session = False
         if use_session:
             # Todo remove session usage
@@ -37,7 +39,17 @@ class Api:
         self.xrls = 0
         self.rlobj = RateLimit()
         self.ratelimit_lock = asyncio.Lock()
+        self.active_request_lock = asyncio.Lock()
         self.limit_request = limit_request
+        self.__activerequests__ = 0
+
+    async def increment_tracker(self):
+        async with self.active_request_lock:
+            self.__activerequests__ = self.__activerequests__ + 1
+
+    async def decrement_tracker(self):
+        async with self.active_request_lock:
+            self.__activerequests__ = self.__activerequests__ - 1
 
     async def get_xrls(self):
         return await self.rlobj.get_xrls_timestamp()
@@ -48,36 +60,46 @@ class Api:
             await self.rlobj.add_xrls_timestamp(new_xrls)
 
     async def _check_ratelimit(self):
-        server_xrls = await self.get_xrls()
-        local_xrls = await self.rlobj.calculate_internal_xrls()
-        print('Server:', server_xrls, 'Local', local_xrls)
-        xrls = max(server_xrls, local_xrls) if not self.limit_request else server_xrls
-        return await self.rlobj.ratelimitcheck(xrls=self.xrls,
-                amount_allow=self.ratelimit_max,
-                within_time=self.ratelimit_within)
+        async with self.ratelimit_lock:
+            xrls = await self.rlobj.get_xrls_timestamp_final()
+            return await self.rlobj.ratelimitcheck(xrls=xrls,
+                    amount_allow=self.ratelimit_max,
+                    within_time=self.ratelimit_within)
 
     async def check_ratelimit(self):
         "Check's the ratelimit"
-        async with self.ratelimit_lock:
-            rlflag = await self._check_ratelimit()
-            if not self.ratelimit_enabled:
-                return True
-            if not rlflag:
-                if self.ratelimitsleep:
-                    n = 0
-                    while not await self._check_ratelimit():
-                        n = n + 1
-                        if n >= self.ratelimitsleep_maxsleeps:
-                            if self.max_safe_requests > self.ratelimit_max:
-                                break
-                            else:
-                                return True
-                        await sleep_thread(self.ratelimitsleep_time)
-                    else:
-                        return True
-                raise RateLimitReached("The Rate Limit was too close the API limit to safely handle this request")
-            else:
-                return True
+        rlflag = await self._check_ratelimit()
+        if not self.ratelimit_enabled:
+            return True
+        # Get other async operations a chance to aquire the lock
+
+        if not rlflag:
+            if self.ratelimitsleep:
+                n = 0
+                while not await self._check_ratelimit():
+                    n = n + 1
+                    if n >= self.ratelimitsleep_maxsleeps:
+                        if self.max_safe_requests > self.ratelimit_max:
+                            break
+                        else:
+                            return True
+                    await sleep_thread(self.ratelimitsleep_time)
+
+                else:
+                    return True
+            raise RateLimitReached("The Rate Limit was too close the API limit to safely handle this request")
+        else:
+            return True
+
+    async def __aenter__(self, *args, **kwargs):
+        while self.__activerequests__ >= self.max_ongoing_requests:
+            # if the user bursts 40+ requests
+            # we can't just allow it
+            await asyncio.sleep(0.05)
+        await self.increment_tracker()
+
+    async def __aexit__(self, *args, **kwargs):
+        await self.decrement_tracker()
 
     def Nation(self, name):
         return NationAPI(name, self)
