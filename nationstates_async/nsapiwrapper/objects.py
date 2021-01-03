@@ -98,33 +98,32 @@ class RateLimit:
         """Sets the current tracker"""
         self.rlref = val
 
-    async def ratelimitcheck(self, amount_allow=48, within_time=30, xrls=0):
+    def ratelimitcheck(self, amount_allow=48, within_time=30, xrls=0):
         """Checks if nsapiwrapper needs pause to prevent api banning
 
             Side Effects: Also calls .cleanup() when returning True
         """
-        async with Lock.RateLimitStateEditLock:
-            if xrls >= amount_allow:
-                pre_raf = xrls - (xrls - len(self.rltime))
-                currenttime = timestamp()
-                try:
-                    while (self.rltime[-1]+within_time) < currenttime:
-                        del self.rltime[-1]
-                    post_raf = xrls - (xrls - len(self.rltime))
-                    diff = pre_raf - post_raf
-                    nxrls = xrls - diff
-                    if nxrls >= amount_allow:
-                        return False
-                    else:
-                        return True
-                except IndexError as err:
-                    if (xrls - pre_raf) >= amount_allow:
-                        return False
-                    else:
-                        return True
-            else:
-                self.cleanup()
-                return True
+        if xrls >= amount_allow:
+            pre_raf = xrls - (xrls - len(self.rltime))
+            currenttime = timestamp()
+            try:
+                while (self.rltime[-1]+within_time) < currenttime:
+                    del self.rltime[-1]
+                post_raf = xrls - (xrls - len(self.rltime))
+                diff = pre_raf - post_raf
+                nxrls = xrls - diff
+                if nxrls >= amount_allow:
+                    return False
+                else:
+                    return True
+            except IndexError as err:
+                if (xrls - pre_raf) >= amount_allow:
+                    return False
+                else:
+                    return True
+        else:
+            self.cleanup()
+            return True
 
     def cleanup(self, amount_allow=50, within_time=30):
         """To prevent the list from growing forever when there isn't enough requests to force it
@@ -149,47 +148,44 @@ class RateLimit:
             #List is empty, pass
             pass
 
-    async def _calculate_internal_xrls(self):
+    def _calculate_internal_xrls(self):
         # may only be called by ratelimitcheck
         self.cleanup()
         return len(self.rltime)
 
-    async def add_timestamp(self):
+    def add_timestamp(self):
         """Adds timestamp to rltime"""
-        async with Lock.RateLimitStateEditLock:
-            self.rltime = [timestamp()] + self.rltime
+        self.rltime = [timestamp()] + self.rltime
 
-    async def add_xrls_timestamp(self, xrls):
+    def add_xrls_timestamp(self, xrls):
         """Adds timestamp to rltime"""
-        async with Lock.RateLimitStateEditLock:
-            self.rlxrls = [(timestamp(), int(xrls))] + self.rlxrls
+        self.rlxrls = [(timestamp(), int(xrls))] + self.rlxrls
 
-    async def _get_xrls_timestamp(self):
+    def _get_xrls_timestamp(self):
         timestamp_sorted = sorted(self.rlxrls, key=lambda x: x[0])
         if len(timestamp_sorted) == 0:
             return (0, 0)
         return find_xrls(timestamp_sorted)
 
-    async def get_xrls_timestamp_final(self):
-        async with Lock.RateLimitStateEditLock:
-            server_xrls = await self._get_xrls_timestamp()
-            local_xrls = await self._calculate_internal_xrls()
-            if server_xrls[0] > local_xrls:
-                # We have to calculate the current xrls now
-                return server_xrls[1] + len(tuple(filter(lambda x: x > server_xrls[0], self.rltime)))
-            else:
-                return local_xrls
+    def get_xrls_timestamp_final(self):
+        server_xrls = self._get_xrls_timestamp()
+        local_xrls = self._calculate_internal_xrls()
+        if server_xrls[0] > local_xrls:
+            # We have to calculate the current xrls now
+            return server_xrls[1] + len(tuple(filter(lambda x: x > server_xrls[0], self.rltime)))
+        else:
+            return local_xrls
 
-            timestamp_sorted = sorted(self.rlxrls, key=lambda x: x[0])
-            if len(timestamp_sorted) == 0:
-                return 0
-            return find_xrls(timestamp_sorted)
+        timestamp_sorted = sorted(self.rlxrls, key=lambda x: x[0])
+        if len(timestamp_sorted) == 0:
+            return 0
+        return find_xrls(timestamp_sorted)
 
 
 
 class APIRequest:
     """Data Class for this library"""
-    def __init__(self, url, api_name, api_value, shards, version, custom_headers, use_post, post_data):
+    def __init__(self, url, api_name, api_value, shards, version, custom_headers, use_post, post_data, trawler_lock):
         self.url = url
         self.api_name = api_name
         self.api_value = api_value
@@ -198,6 +194,7 @@ class APIRequest:
         self.custom_headers = custom_headers
         self.use_post = use_post
         self.post_data = post_data
+        self.trawler_lock = trawler_lock
 
     def __repr__(self):
         return str(vars(self))
@@ -223,10 +220,10 @@ class NationstatesAPI:
     def _ratelimitcheck(self):
         rlflag = self.api_mother.rl_can_request()
 
-    def _prepare_request(self, url, api_name, api_value, shards, version=None, request_headers=None, use_post=False, post_data=None):
+    def _prepare_request(self, url, api_name, api_value, shards, version=None, request_headers=None, use_post=False, post_data=None, trawler_lock=False):
         if request_headers is None:
             request_headers = dict()
-        return APIRequest(url, api_name, api_value, shards, version, request_headers, use_post, post_data)
+        return APIRequest(url, api_name, api_value, shards, version, request_headers, use_post, post_data, trawler_lock)
 
     async def _request_wrap_post(self, url, headers, data):
         _session = self.api_mother.session if self.api_mother.use_session else aiohttp.ClientSession()
@@ -243,10 +240,10 @@ class NationstatesAPI:
     async def _request_api(self, req):
         # Since it's possible to burst requests, we have to mark the request
         # before it's sent instead of after
-        lock = Lock.TrawlerLock if self.api_mother.limit_request else Lock.TrawlerLockDisabled
+        lock = Lock.TrawlerLock if req.trawler_lock or self.api_mother.limit_request else Lock.TrawlerLockDisabled
         async with lock:
 
-            await self.api_mother.rlobj.add_timestamp()
+            self.api_mother.rlobj.add_timestamp()
             await self.api_mother.check_ratelimit()
             headers = {"User-Agent":self.api_mother.user_agent}
             headers.update(req.custom_headers)
@@ -259,24 +256,23 @@ class NationstatesAPI:
                 return resp
 
 
-    async def _handle_request(self, response, request_meta):
+    def _handle_request(self, response, request_meta):
         # mark for refactor, i don't think any locking is needed here
-        async with Lock.HandleResponseLock:
-            is_text = ""
-            result = {
-                "response": response,
-                "xml": response.text,
-                "request": request_meta,
-                "status": response.status_code,
-                "headers": response.headers,
-                "url": request_meta.url
-            }
+        is_text = ""
+        result = {
+            "response": response,
+            "xml": response.text,
+            "request": request_meta,
+            "status": response.status_code,
+            "headers": response.headers,
+            "url": request_meta.url
+        }
 
-            await self.api_mother.rate_limit(new_xrls=response.headers["X-ratelimit-requests-seen"])
-           
-            response_check(result)
+        self.api_mother.rate_limit(new_xrls=response.headers["X-ratelimit-requests-seen"])
+       
+        response_check(result)
 
-            return result
+        return result
 
     def _url(self, api_name, value, shards, version):
         return gen_url(
@@ -284,27 +280,27 @@ class NationstatesAPI:
             shards=shards,
             version=version)
 
-    async def _request(self, shards, url, api_name, value_name, version, request_headers=None):
+    async def _request(self, shards, url, api_name, value_name, version, request_headers=None, force_trawler=False):
         # This relies on .url() being defined by child classes
         async with self.api_mother:
             url = self.url(shards)
             req = self._prepare_request(url, 
                     api_name,
                     value_name,
-                    shards, version, request_headers, False, None)
+                    shards, version, request_headers, False, None, force_trawler)
             resp = await self._request_api(req)
-            result = await self._handle_request(resp, req)
+            result = self._handle_request(resp, req)
             return result
 
-    async def _request_post(self, shards, url, api_name, value_name, version, post_data, request_headers=None):
+    async def _request_post(self, shards, url, api_name, value_name, version, post_data, request_headers=None, force_trawler=False):
         # This relies on .url() being defined by child classes
         async with self.api_mother:
             req = self._prepare_request(url, 
                     api_name,
                     value_name,
-                    shards, version, request_headers, True, post_data)
+                    shards, version, request_headers, True, post_data, force_trawler)
             resp = await self._request_api(req)
-            result = await self._handle_request(resp, req)
+            result = self._handle_request(resp, req)
             return result
 
     def _default_shards(self):
@@ -363,7 +359,7 @@ class PrivateNationAPI(NationAPI):
         custom_headers = await self._get_pin_headers() 
         url = self.url(shards)
         try:
-            response = await self._request(shards, url, self.api_name, self.nation_name, self.api_mother.version, request_headers=custom_headers)
+            response = await self._request(shards, url, self.api_name, self.nation_name, self.api_mother.version, request_headers=custom_headers, force_trawler=not pin_used)
         except Forbidden as exc:
             # PIN is wrong or login is wrong
             if pin_used:
@@ -381,7 +377,7 @@ class PrivateNationAPI(NationAPI):
         url = self.post_url()
         post_data = shard_object_extract(shards)
         try:
-            response = await self._request_post(shards, url, self.api_name, self.nation_name, self.api_mother.version, post_data, request_headers=custom_headers)
+            response = await self._request_post(shards, url, self.api_name, self.nation_name, self.api_mother.version, post_data, request_headers=custom_headers, force_trawler=not pin_used)
         except Forbidden as exc:
             # PIN is wrong or login is wrong
             if pin_used:

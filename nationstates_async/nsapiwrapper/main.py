@@ -39,36 +39,31 @@ class Api:
         self.xrls = 0
         self.rlobj = RateLimit()
         self.ratelimit_lock = asyncio.Lock()
-        self.active_request_lock = asyncio.Lock()
         self.limit_request = limit_request
         self.__activerequests__ = 0
 
-    async def increment_tracker(self):
-        async with self.active_request_lock:
-            self.__activerequests__ = self.__activerequests__ + 1
+    def increment_tracker(self):
+        self.__activerequests__ = self.__activerequests__ + 1
 
-    async def decrement_tracker(self):
-        async with self.active_request_lock:
-            self.__activerequests__ = self.__activerequests__ - 1
+    def decrement_tracker(self):
+        self.__activerequests__ = self.__activerequests__ - 1
 
-    async def get_xrls(self):
-        return await self.rlobj.get_xrls_timestamp()
+    def get_xrls(self):
+        return self.rlobj.get_xrls_timestamp()
 
     async def rate_limit(self, new_xrls=1):
         # Raises an exception if RateLimit is either banned 
-        async with self.ratelimit_lock:
-            await self.rlobj.add_xrls_timestamp(new_xrls)
+        self.rlobj.add_xrls_timestamp(new_xrls)
 
-    async def _check_ratelimit(self):
-        async with self.ratelimit_lock:
-            xrls = await self.rlobj.get_xrls_timestamp_final()
-            return await self.rlobj.ratelimitcheck(xrls=xrls,
-                    amount_allow=self.ratelimit_max,
-                    within_time=self.ratelimit_within)
+    def _check_ratelimit(self):
+        xrls = self.rlobj.get_xrls_timestamp_final()
+        return self.rlobj.ratelimitcheck(xrls=xrls,
+                amount_allow=self.ratelimit_max,
+                within_time=self.ratelimit_within)
 
     async def check_ratelimit(self):
         "Check's the ratelimit"
-        rlflag = await self._check_ratelimit()
+        rlflag = self._check_ratelimit()
         if not self.ratelimit_enabled:
             return True
         # Get other async operations a chance to aquire the lock
@@ -76,7 +71,7 @@ class Api:
         if not rlflag:
             if self.ratelimitsleep:
                 n = 0
-                while not await self._check_ratelimit():
+                while not self._check_ratelimit():
                     n = n + 1
                     if n >= self.ratelimitsleep_maxsleeps:
                         if self.max_safe_requests > self.ratelimit_max:
@@ -96,10 +91,12 @@ class Api:
             # if the user bursts 40+ requests
             # we can't just allow it
             await asyncio.sleep(0.05)
-        await self.increment_tracker()
+        self.increment_tracker()
 
     async def __aexit__(self, *args, **kwargs):
-        await self.decrement_tracker()
+        # aexit isn't really async depedent but we want to keep the with syntax
+        await asyncio.sleep(0)
+        self.decrement_tracker()
 
     def Nation(self, name):
         return NationAPI(name, self)
