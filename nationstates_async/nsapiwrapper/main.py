@@ -51,7 +51,7 @@ class Api:
     def get_xrls(self):
         return self.rlobj.get_xrls_timestamp()
 
-    async def rate_limit(self, new_xrls=1):
+    def rate_limit(self, new_xrls=1):
         # Raises an exception if RateLimit is either banned 
         self.rlobj.add_xrls_timestamp(new_xrls)
 
