@@ -17,7 +17,6 @@ class Api:
         ratelimit_maxsleeps=ratelimit_maxsleeps,
         max_safe_requests=max_safe_requests,
         ratelimit_enabled=True,
-        use_session=True,
         limit_request=True,
         max_ongoing_requests=max_ongoing_requests):
         self.user_agent = user_agent
@@ -30,15 +29,7 @@ class Api:
         self.max_safe_requests = max_safe_requests
         self.ratelimit_enabled = ratelimit_enabled
         self.max_ongoing_requests = max_ongoing_requests
-        self.use_session = False
-        if use_session:
-            # Todo remove session usage
-            self.session = None
-        else:
-            self.session = None
-        self.xrls = 0
         self.rlobj = RateLimit()
-        self.ratelimit_lock = asyncio.Lock()
         self.limit_request = limit_request
         self.__activerequests__ = 0
 
@@ -95,7 +86,6 @@ class Api:
 
     async def __aexit__(self, *args, **kwargs):
         # aexit isn't really async depedent but we want to keep the with syntax
-        await asyncio.sleep(0)
         self.decrement_tracker()
 
     def Nation(self, name):

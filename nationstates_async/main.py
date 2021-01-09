@@ -15,7 +15,6 @@ class Nationstates:
                                     ratelimit_within=ratelimit_timeframe,
                                     ratelimit_maxsleeps=ratelimit_maxsleeps,
                                     ratelimit_enabled=ratelimit_enabled,
-                                    use_session=use_session,
                                     limit_request=one_request_at_a_time)
         self.do_retry = do_retry
         self.retry_sleep = retry_sleep

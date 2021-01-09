@@ -20,8 +20,6 @@ class DummyLock():
         pass
 
 class Lock:
-    RateLimitStateEditLock = asyncio.Lock()
-    HandleResponseLock = asyncio.Lock()
     TrawlerLock = asyncio.Lock()
     TrawlerLockDisabled = DummyLock()
 
@@ -226,13 +224,13 @@ class NationstatesAPI:
         return APIRequest(url, api_name, api_value, shards, version, request_headers, use_post, post_data, trawler_lock)
 
     async def _request_wrap_post(self, url, headers, data):
-        _session = self.api_mother.session if self.api_mother.use_session else aiohttp.ClientSession()
+        _session = aiohttp.ClientSession()
         async with _session as session:
             async with session.post(url, headers=headers, data=data) as response:
                 return APIResponse(response.status, await response.text(), response.headers, response)
 
     async def _request_wrap_get(self, url, headers):
-        _session = self.api_mother.session if self.api_mother.use_session else aiohttp.ClientSession()
+        _session = aiohttp.ClientSession()
         async with _session as session:
             async with session.get(url, headers=headers) as response:
                 return APIResponse(response.status, await response.text(), response.headers, response)
@@ -247,7 +245,6 @@ class NationstatesAPI:
             await self.api_mother.check_ratelimit()
             headers = {"User-Agent":self.api_mother.user_agent}
             headers.update(req.custom_headers)
-            sess = self.api_mother.session if  self.api_mother.use_session else requests
             if req.use_post:
                 resp =  await self._request_wrap_post(req.url, headers, req.post_data)
                 return resp
