@@ -38,6 +38,7 @@ class Api:
             self.session = None
         self.xrls = 0
         self.rlobj = RateLimit()
+        self.increment_lock = asyncio.Lock()
         self.ratelimit_lock = asyncio.Lock()
         self.limit_request = limit_request
         self.__activerequests__ = 0
@@ -91,12 +92,13 @@ class Api:
             # if the user bursts 40+ requests
             # we can't just allow it
             await asyncio.sleep(0.05)
-        self.increment_tracker()
+        async with self.increment_lock:
+            self.increment_tracker()
 
     async def __aexit__(self, *args, **kwargs):
         # aexit isn't really async dependent but we got to do something
-        await asyncio.sleep(0)
-        self.decrement_tracker()
+        async with self.increment_lock:
+            self.decrement_tracker()
 
     def Nation(self, name):
         return NationAPI(name, self)
