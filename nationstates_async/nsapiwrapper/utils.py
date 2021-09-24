@@ -5,6 +5,30 @@ import asyncio
 
 SleepRequestsLock = asyncio.Lock()
 
+
+entities = {
+    '&quot;': '|PYNATIONSTATES_QUOTE|',
+    '&amp;': '|PYNATIONSTATES_AMP|',
+    '&apos;': '|PYNATIONSTATES_APOS|',
+    '&lt;': '|PYNATIONSTATES_LT|',
+    '&gt;': '|PYNATIONSTATES_GT|'
+
+}
+
+
+def pyns_encode_entities(string):
+    # Encodes
+    for k,v in entities.items():
+        string = string.replace(k,v)
+    return string
+
+def pyns_decode_entities(string):
+    # Encodes 
+    for k,v in entities.items():
+        string = string.replace(v,k)
+    return string
+
+
 def _parsedict(x, dicttype):
     """
     This function recursively loops through the processed xml (now dicttype)
@@ -15,7 +39,7 @@ def _parsedict(x, dicttype):
             _parsedict(y, dicttype), dicttype) else _parsedict(y, dicttype) for y in x]
         return gen_list
     if isinstance(x, str):
-        return x
+        return pyns_decode_entities(x)
     if isinstance(x, dict):
         newdicttype = dicttype()
         for key in x.keys():

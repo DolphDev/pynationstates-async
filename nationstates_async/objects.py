@@ -42,14 +42,29 @@ def dispatch_token(resp, use_exception):
             return False
     return data['success']
 
-def dispatch_error_check(resp, use_exception):
+def dispatch_error_check(resp, use_exception, custom_message='PlaceHolder'):
+    if custom_message:
+        checks = {dispatch_to_soon, rmb_to_soon, custom_message}
+    else:
+        checks = {dispatch_to_soon, rmb_to_soon}
+
     data = resp['data'][Nation.api_name]
     if data.get('error'):
         if use_exception:
+            if data['error'] in checks:
+                raise ActionTooRecent(data['error'])
             raise APIUsageError(data['error'])
         else:
             return False
     return True
+
+def action_full_response(api, final_resp, full_response):
+    if final_resp is False:
+        return False
+    elif full_response:
+        return final_resp
+    else:
+        return final_resp['data'][api.api_name]
 
 class NSDict(dict):
     """Specialized Dict"""
@@ -61,8 +76,12 @@ class NSDict(dict):
             raise AttributeError('\'{}\' has no attribute \'{}\''.format(
                 type(self), attr))
 
-def response_parser(response, full_response, use_nsdict=True):
-    xml = response["xml"]
+def response_parser(response, full_response, use_nsdict=True, escape=False):
+    raw_xml = response["xml"]
+    if escape:
+        xml = html.unescape(pyns_encode_entities(raw_xml))
+    else:
+        xml = raw_xml
     if full_response:
         try:
             if use_nsdict:
@@ -70,9 +89,15 @@ def response_parser(response, full_response, use_nsdict=True):
             else:
                 response["data"] = parsetree(xml)
             response["data_xmltodict"] = parse(xml)
+            response["data_parse_success"] = True
         except ExpatError:
+            if escape is False:
+                return response_parser(response, full_response, use_nsdict=use_nsdict, escape=True)
+            # This is will be improved 
+            # Will likely replace with Exception asking to create a github issue 
             response["data"] = xml
-            response["data_xmltodict"] = None          
+            response["data_xmltodict"] = None  
+            response["data_parse_success"] = False
         return response
     else:
         try:
@@ -81,6 +106,10 @@ def response_parser(response, full_response, use_nsdict=True):
             else:
                 return parsetree(xml)
         except ExpatError:
+            if escape is False:
+                return response_parser(response, full_response, use_nsdict=use_nsdict, escape=True)
+            # This needs to be improved
+            # Will likely replace with Exception asking to create a github issue
             return xml
 
 def bad_api_parameter(param, api_name):
@@ -184,10 +213,10 @@ class API_WRAPPER:
                 return (None, False)
             elif self.api_mother.do_retry:
                 request_limit = self.api_mother.max_retries
-                sleep(self.api_mother.retry_sleep)
+                await asyncio.sleep(self.api_mother.retry_sleep)
                 resp = await self.request(shards, full_response, True, use_post)
                 while not resp[1]:
-                    sleep(self.api_mother.retry_sleep)
+                    await asyncio.sleep(self.api_mother.retry_sleep)
                     resp = await self.request(shards, full_response, True, use_post)
                     request_limit = request_limit - 1
                     if request_limit == 0:
@@ -204,6 +233,10 @@ class API_WRAPPER:
         else:
             resp = await self.request(shards=args, full_response=full_response, use_post=False)
             return resp
+
+    def _check_beta(self):
+        if not self.api_mother.enable_beta:
+            raise BetaDisabled('Beta Endpoints are not enabled. Pass enable_beta = True to nationstates.Nationstates to suppress')
 
     async def get_shards(self, *args, full_response=False):
         """Get Shards"""
@@ -254,6 +287,13 @@ class Nation(API_WRAPPER):
         if not self.is_auth:
             raise NotAuthenticated("Action requires authentication")
 
+    async def exists(self):
+        try:
+            await self.get_shards('name')
+            return True
+        except NotFound:
+            return False
+
     def authenticate(self, password=None, autologin=None):
         self._set_apiwrapper(self._determine_api(self.nation_name, password, autologin))
         return self
@@ -273,20 +313,39 @@ class Nation(API_WRAPPER):
             else:
                 return resp["data"][self.api_name]
 
-    async def _dispatch(self, dispatch, use_exception=True, **kwargs):
-        self._check_auth()
-        token_resp = await self.command('dispatch', dispatch=dispatch, mode='prepare', nation=self.nation_name, full_response=True, use_post=True, **kwargs)
+    async def _prepare_execute_request(self, name, bad_message,  use_exception=True, **kwargs):
+        token_resp = await self.command(name, mode='prepare', nation=self.nation_name, full_response=True, use_post=True, **kwargs)
         token = dispatch_token(token_resp, use_exception)
         if use_exception is False and token is False:
             return False
-        final_resp =  await self.command('dispatch', dispatch=dispatch, mode='execute', token=token, nation=self.nation_name, full_response=True, use_post=True, **kwargs)
-        check = dispatch_error_check(final_resp, use_exception)
-        # Check was False - we need to return False down the line
+        final_resp =  await self.command(name, mode='execute', nation=self.nation_name, token=token, full_response=True, use_post=True, **kwargs)
+        check = dispatch_error_check(final_resp, use_exception, bad_message)     
         if not check:
             return check
         else:
             return final_resp
-        
+
+    async def execute_command(self, name, use_exception=True, limit=10, sleep_time=5, too_soon_message=None, **kwargs):
+        """ Executes a command that follows the prepare and execute paradigm """
+        last_exc = None
+        while limit > 0:
+            try:
+                return await self._prepare_execute_request(name, too_soon_message, use_exception=use_exception, **kwargs)
+            except ActionTooRecent as Exc:
+                limit = limit - 1
+                last_exc = Exc
+                await sleep_thread(sleep_time)
+        raise last_exc
+
+    async def _dispatch(self, dispatch, use_exception=True, **kwargs):
+        if not self.api_mother.enable_beta:
+            print('Warning: Beta Features are not enabled, but due to backwards compatiblity this method is not disabled. Enable Beta Flag to supress this message')
+        self._check_auth()
+
+
+        kwargs['dispatch'] = dispatch
+
+        return await self.execute_command('dispatch', use_exception=use_exception, **kwargs)
 
     async def create_dispatch(self, title=None, text=None, category=None, subcategory=None, full_response=False, use_exception=True):
         cant_be_none(title=title, text=text, category=category, subcategory=subcategory)
@@ -294,12 +353,7 @@ class Nation(API_WRAPPER):
         final_resp =  await self._dispatch('add', title=title, text=text, 
                                     category=category, subcategory=subcategory, use_exception=use_exception)
 
-        if final_resp is False:
-            return False
-        elif full_response:
-            return final_resp
-        else:
-            return final_resp['data'][self.api_name]
+        return action_full_response(self, final_resp, full_response)
 
     async def edit_dispatch(self, dispatch_id=None, title=None, text=None, category=None, subcategory=None, full_response=False, use_exception=True):
         cant_be_none(dispatch_id=dispatch_id, title=title, text=text, category=category, subcategory=subcategory)
@@ -307,24 +361,17 @@ class Nation(API_WRAPPER):
         final_resp =  await self._dispatch('edit', dispatchid=dispatch_id, title=title, text=text, 
                                     category=category, subcategory=subcategory, use_exception=use_exception)
 
-        if final_resp is False:
-            return False
-        elif full_response:
-            return final_resp
-        else:
-            return final_resp['data'][self.api_name]
+        return action_full_response(self, final_resp, full_response)
 
-    async def remove_dispatch(self, dispatch_id=None, use_exception=True, full_response=False): 
+
+    async def remove_dispatch(self, dispatch_id=None, full_response=False, use_exception=True): 
         cant_be_none(dispatch_id=dispatch_id)
 
         final_resp =  await self._dispatch('remove', dispatchid=dispatch_id, use_exception=use_exception)
 
-        if final_resp is False:
-            return False
-        elif full_response:
-            return final_resp
-        else:
-            return final_resp['data'][self.api_name]
+        return action_full_response(self, final_resp, full_response)
+
+
 
     async def send_telegram(self, telegram=None, client_key=None, tgid=None, key=None):
         """Sends Telegram. Can either provide a telegram directly, or provide the api details and created internally
@@ -339,6 +386,16 @@ class Nation(API_WRAPPER):
         else:
             telegram = self.api_mother.telegram(client_key, tgid, key)
         await telegram.send_telegram(self.nation_name)
+
+    async def send_rmb(self, region=None, text=None, full_response=False):
+        self._check_beta()
+        self._check_auth()
+        cant_be_none(region=region, text=text)
+        if isinstance(region, Region):
+            region = region.region_name
+        final_resp = await self.execute_command('rmbpost', nation_name=self.nation_name, region=region, text=text) 
+        return action_full_response(self, final_resp, full_response)
+
 
     async def verify(self, checksum=None, token=None):
         """Wraps around the verify API"""
@@ -373,6 +430,13 @@ class Region(API_WRAPPER):
         return "<Region:'{value}' at {hexloc}>".format(
             value=self.region_name,
             hexloc=hex(id(self)).upper().replace("X", "x"))
+
+    async def exists(self):
+        try:
+            await self.get_shards('name')
+            return True
+        except NotFound:
+            return False
 
     @property
     async def nations(self):
@@ -466,7 +530,7 @@ class Cards(API_WRAPPER):
     def _determine_api(self):
         return self.api.Cards()
 
-    def individual_cards(self, cardid=None, season=None, shards=None, full_response=False):
+    async def individual_cards(self, cardid=None, season=None, shards=None, full_response=False):
         # Alias's a individual card, which has it's own api
         inv_cards = self.api_mother.individual_cards(cardid=cardid, season=season)
         if shards is None:
@@ -475,22 +539,22 @@ class Cards(API_WRAPPER):
             shards = (shards,)
         return inv_cards.get_shards(*shards, full_response=full_response)
 
-    def decks(self, nation_name=None, nation_id=None, full_response=False):
+    async def decks(self, nation_name=None, nation_id=None, full_response=False):
         kw = nationid_or_name(nation_id, nation_name)
         shard = Shard('deck', **kw)
-        return self.get_shards(shard, full_response=full_response)
+        return await self.get_shards(shard, full_response=full_response)
 
-    def deck_owner_info(self, nation_name=None, nation_id=None, full_response=False):
+    async def deck_owner_info(self, nation_name=None, nation_id=None, full_response=False):
         kw = nationid_or_name(nation_id, nation_name)
         shard = Shard('info', **kw)
-        return self.get_shards(shard, full_response=full_response)
+        return await self.get_shards(shard, full_response=full_response)
 
-    def asks_and_bids(self, nation_name=None, nation_id=None, full_response=False):
+    async def asks_and_bids(self, nation_name=None, nation_id=None, full_response=False):
         kw = nationid_or_name(nation_id, nation_name)
         shard = Shard('asksbids', **kw)
-        return self.get_shards(shard, full_response=full_response)
+        return await self.get_shards(shard, full_response=full_response)
 
-    def collections(self, nation_name=None, nation_id=None, collections_id=None, full_response=False):
+    async def collections(self, nation_name=None, nation_id=None, collections_id=None, full_response=False):
         if nation_id or nation_name:
             kw = nationid_or_name(nation_id, nation_name)
         elif collections_id:
@@ -498,13 +562,13 @@ class Cards(API_WRAPPER):
         else:
             raise ValueError('Collection id or nation not supplied')
         shard = Shard('collections', **kw)
-        return self.get_shards(shard, full_response=full_response)
+        return await self.get_shards(shard, full_response=full_response)
 
-    def auctions(self, full_response=False):
+    async def auctions(self, full_response=False):
         shard = Shard('auctions')
-        return self.get_shards(shard, full_response=full_response)
+        return await self.get_shards(shard, full_response=full_response)
 
-    def trades(self, limit=None, sincetime=None, beforetime=None, full_response=False):
+    async def trades(self, limit=None, sincetime=None, beforetime=None, full_response=False):
         kw = {}
         if limit:
             kw['limit'] = limit
@@ -514,7 +578,7 @@ class Cards(API_WRAPPER):
             kw['beforetime'] = beforetime
 
         shard = Shard('trades', **kw)
-        return self.get_shards(shard, full_response=full_response)
+        return await self.get_shards(shard, full_response=full_response)
 
 
 class IndividualCards(API_WRAPPER):

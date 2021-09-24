@@ -87,6 +87,10 @@ class RateLimit:
     def __init__(self):
         self.rlref = []
         self.rlxrls = []
+        self.statelock = asyncio.Lock()
+        self.timestamplock_internal = asyncio.Lock()
+        self.timestamplock_xrls = asyncio.Lock()
+
 
     @property
     def rltime(self):
@@ -98,34 +102,35 @@ class RateLimit:
         """Sets the current tracker"""
         self.rlref = val
 
-    def ratelimitcheck(self, amount_allow=48, within_time=30, xrls=0):
+    async def ratelimitcheck(self, amount_allow=48, within_time=30, xrls=0):
         """Checks if nsapiwrapper needs pause to prevent api banning
 
             Side Effects: Also calls .cleanup() when returning True
         """
         if xrls >= amount_allow:
-            pre_raf = xrls - (xrls - len(self.rltime))
-            currenttime = timestamp()
-            try:
-                while (self.rltime[-1]+within_time) < currenttime:
-                    del self.rltime[-1]
-                post_raf = xrls - (xrls - len(self.rltime))
-                diff = pre_raf - post_raf
-                nxrls = xrls - diff
-                if nxrls >= amount_allow:
-                    return False
-                else:
-                    return True
-            except IndexError as err:
-                if (xrls - pre_raf) >= amount_allow:
-                    return False
-                else:
-                    return True
+            async with self.statelock:
+                pre_raf = xrls - (xrls - len(self.rltime))
+                currenttime = timestamp()
+                try:
+                    while (self.rltime[-1]+within_time) < currenttime:
+                        del self.rltime[-1]
+                    post_raf = xrls - (xrls - len(self.rltime))
+                    diff = pre_raf - post_raf
+                    nxrls = xrls - diff
+                    if nxrls >= amount_allow:
+                        return False
+                    else:
+                        return True
+                except IndexError as err:
+                    if (xrls - pre_raf) >= amount_allow:
+                        return False
+                    else:
+                        return True
         else:
-            self.cleanup()
+            await self.cleanup()
             return True
 
-    def cleanup(self, amount_allow=50, within_time=30):
+    async def cleanup(self, amount_allow=50, within_time=30):
         """To prevent the list from growing forever when there isn't enough requests to force it
             cleanup
 
@@ -133,33 +138,35 @@ class RateLimit:
             can only be called from ratelimitcheck
             """
         currenttime = timestamp()
+        async with self.statelock:
+            try:
+                while (self.rltime[-1]+within_time) < currenttime:
+                    del self.rltime[-1]
+            except IndexError as err:
+                #List is empty, pass
+                pass
 
-        try:
-            while (self.rltime[-1]+within_time) < currenttime:
-                del self.rltime[-1]
-        except IndexError as err:
-            #List is empty, pass
-            pass
+            try:
+                while (self.rlxrls[-1][0]+within_time) < currenttime:
+                    del self.rlxrls[-1]
+            except IndexError as err:
+                #List is empty, pass
+                pass
 
-        try:
-            while (self.rlxrls[-1][0]+within_time) < currenttime:
-                del self.rlxrls[-1]
-        except IndexError as err:
-            #List is empty, pass
-            pass
-
-    def _calculate_internal_xrls(self):
+    async def _calculate_internal_xrls(self):
         # may only be called by ratelimitcheck
-        self.cleanup()
+        await self.cleanup()
         return len(self.rltime)
 
-    def add_timestamp(self):
+    async def add_timestamp(self):
         """Adds timestamp to rltime"""
-        self.rltime = [timestamp()] + self.rltime
+        async with self.timestamplock_internal:
+            self.rltime = [timestamp()] + self.rltime
 
-    def add_xrls_timestamp(self, xrls):
+    async def add_xrls_timestamp(self, xrls):
         """Adds timestamp to rltime"""
-        self.rlxrls = [(timestamp(), int(xrls))] + self.rlxrls
+        async with self.timestamplock_xrls:
+            self.rlxrls = [(timestamp(), int(xrls))] + self.rlxrls
 
     def _get_xrls_timestamp(self):
         timestamp_sorted = sorted(self.rlxrls, key=lambda x: x[0])
@@ -167,8 +174,8 @@ class RateLimit:
             return (0, 0)
         return find_xrls(timestamp_sorted)
 
-    def get_xrls_timestamp_final(self):
-        server_xrls = self._get_xrls_timestamp()
+    async def get_xrls_timestamp_final(self):
+        server_xrls = await self._get_xrls_timestamp()
         local_xrls = self._calculate_internal_xrls()
         if server_xrls[0] > local_xrls:
             # We have to calculate the current xrls now
@@ -243,7 +250,7 @@ class NationstatesAPI:
         lock = Lock.TrawlerLock if req.trawler_lock or self.api_mother.limit_request else Lock.TrawlerLockDisabled
         async with lock:
 
-            self.api_mother.rlobj.add_timestamp()
+            await self.api_mother.rlobj.add_timestamp()
             await self.api_mother.check_ratelimit()
             headers = {"User-Agent":self.api_mother.user_agent}
             headers.update(req.custom_headers)
@@ -256,7 +263,7 @@ class NationstatesAPI:
                 return resp
 
 
-    def _handle_request(self, response, request_meta):
+    async def _handle_request(self, response, request_meta):
         # mark for refactor, i don't think any locking is needed here
         is_text = ""
         result = {
@@ -268,7 +275,7 @@ class NationstatesAPI:
             "url": request_meta.url
         }
 
-        self.api_mother.rate_limit(new_xrls=response.headers["X-ratelimit-requests-seen"])
+        await self.api_mother.rate_limit(new_xrls=response.headers["X-ratelimit-requests-seen"])
        
         response_check(result)
 
@@ -289,7 +296,7 @@ class NationstatesAPI:
                     value_name,
                     shards, version, request_headers, False, None, force_trawler)
             resp = await self._request_api(req)
-            result = self._handle_request(resp, req)
+            result = await self._handle_request(resp, req)
             return result
 
     async def _request_post(self, shards, url, api_name, value_name, version, post_data, request_headers=None, force_trawler=False):
@@ -300,7 +307,7 @@ class NationstatesAPI:
                     value_name,
                     shards, version, request_headers, True, post_data, force_trawler)
             resp = await self._request_api(req)
-            result = self._handle_request(resp, req)
+            result = await self._handle_request(resp, req)
             return result
 
     def _default_shards(self):

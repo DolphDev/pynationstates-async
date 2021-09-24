@@ -36,6 +36,10 @@ class APIRateLimitBan(APIError):
 class APIUsageError(APIError):
     pass
 
+
+class ActionTooRecent(APIUsageError):
+    pass
+
 class ServerError(APIError):
     # Can Be Used to check for an Website Error
     pass
@@ -43,11 +47,19 @@ class ServerError(APIError):
 class ConflictError(ServerError):
     """ConflictError from Server"""
     pass
+
 class InternalServerError(ServerError):
     pass
 
 class CloudflareServerError(ServerError):
     pass
 
+class BadResponse(ServerError):
+    # When NS returns an odd response we can't otherwise classify
+    pass
+
 class BadRequest(APIError):
+    pass
+
+class BetaDisabled(NSBaseError):
     pass

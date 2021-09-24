@@ -51,13 +51,13 @@ class Api:
     def get_xrls(self):
         return self.rlobj.get_xrls_timestamp()
 
-    def rate_limit(self, new_xrls=1):
+    async def rate_limit(self, new_xrls=1):
         # Raises an exception if RateLimit is either banned 
-        self.rlobj.add_xrls_timestamp(new_xrls)
+        await self.rlobj.add_xrls_timestamp(new_xrls)
 
-    def _check_ratelimit(self):
-        xrls = self.rlobj.get_xrls_timestamp_final()
-        return self.rlobj.ratelimitcheck(xrls=xrls,
+    async def _check_ratelimit(self):
+        xrls = await self.rlobj.get_xrls_timestamp_final()
+        return await self.rlobj.ratelimitcheck(xrls=xrls,
                 amount_allow=self.ratelimit_max,
                 within_time=self.ratelimit_within)
 
@@ -94,7 +94,7 @@ class Api:
         self.increment_tracker()
 
     async def __aexit__(self, *args, **kwargs):
-        # aexit isn't really async depedent but we want to keep the with syntax
+        # aexit isn't really async dependent but we got to do something
         await asyncio.sleep(0)
         self.decrement_tracker()
 
