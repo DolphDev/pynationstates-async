@@ -3,13 +3,14 @@ from .nsapiwrapper.urls import Shard
 from .nsapiwrapper.utils import parsetree, parse
 
 from xml.parsers.expat import ExpatError
-from time import sleep
+import html
 from functools import wraps
 
 from .exceptions import ConflictError, InternalServerError, CloudflareServerError, APIUsageError, NotAuthenticated
 from .info import nation_shards, region_shards, world_shards, wa_shards, individual_cards_shards
 
 import aiohttp
+
 
 # Some Lines may have # pragma: no cover to specify to ignore coverage misses here
 # Mostly due to it not being pratical for those methods to be automatically tested

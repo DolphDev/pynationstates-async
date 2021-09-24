@@ -175,8 +175,8 @@ class RateLimit:
         return find_xrls(timestamp_sorted)
 
     async def get_xrls_timestamp_final(self):
-        server_xrls = await self._get_xrls_timestamp()
-        local_xrls = self._calculate_internal_xrls()
+        server_xrls = self._get_xrls_timestamp()
+        local_xrls = await self._calculate_internal_xrls()
         if server_xrls[0] > local_xrls:
             # We have to calculate the current xrls now
             return server_xrls[1] + len(tuple(filter(lambda x: x > server_xrls[0], self.rltime)))
@@ -186,7 +186,8 @@ class RateLimit:
         timestamp_sorted = sorted(self.rlxrls, key=lambda x: x[0])
         if len(timestamp_sorted) == 0:
             return 0
-        return find_xrls(timestamp_sorted)
+        async with self.statelock:
+            return find_xrls(timestamp_sorted)
 
 
 
