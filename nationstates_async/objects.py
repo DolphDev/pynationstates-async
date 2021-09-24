@@ -1,6 +1,6 @@
 from .nsapiwrapper.objects import NationAPI, RegionAPI, WorldAPI, WorldAssemblyAPI, TelegramAPI, CardsAPI
 from .nsapiwrapper.urls import Shard
-from .nsapiwrapper.utils import parsetree, parse
+from .nsapiwrapper.utils import parsetree, parse, pyns_encode_entities
 
 from xml.parsers.expat import ExpatError
 import html
