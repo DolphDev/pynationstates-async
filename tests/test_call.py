@@ -15,16 +15,22 @@ del os
 sep_api =  ns.Nationstates(USERAGENT)
 
 joint_api = ns.Nationstates(USERAGENT)
+joint_api_enable_beta = ns.Nationstates(USERAGENT, enable_beta=True)
 test_nation_nonauth = joint_api.nation(test_nation)
 test_auth_nation = joint_api.nation(test_nation, password=PASSWORD)
+test_auth_nation_BETA = joint_api_enable_beta.nation(test_nation, password=PASSWORD)
+
 test_nation_r = joint_api.nation(test_nation_r)
 issue_nation_1 = joint_api.nation('Pynationstates Issue Farm 1', password=PASSWORD)
 issue_nation_2 = joint_api.nation('Pynationstates Issue Farm 2', password=PASSWORD)
 issue_nation_3 = joint_api.nation('Pynationstates Issue Farm 3', password=PASSWORD)
 issue_nation_zero = joint_api.nation('pynationstates_0_issues_test_nation', password=PASSWORD)
+fake_nation = joint_api.nation('FAKE NATION 1 FAKE NATION 1 FAKE NATION 1 FAKE NATION 1')
+fake_region = joint_api.region('FAKE REGION 1 FAKE REGION 1 FAKE REGION 1 FAKE REGION 1')
+
 
 import asyncio
-# Used in tests written for pynationstates 
+# Used to translate tests written for pynationstates cause I'n kazy
 def run_async_call(c):
     rv = {}
     async def do_io(*args):
@@ -239,6 +245,11 @@ class ApiJoinTest(unittest.TestCase):
         except Exception as Err:
             self.fail(Err)
 
+    def test_exists(self):
+        assert run_async_call(fake_nation.exists()) is False
+        assert run_async_call(fake_region.exists()) is False
+        assert run_async_call(test_auth_nation.exists())
+
 
     def test_create_dispatch(self):
         from datetime import datetime
@@ -285,6 +296,11 @@ class ApiJoinTest(unittest.TestCase):
         except Exception as Err:
             self.fail(Err)
 
+    def test_send_rmb(self):
+        try:
+            run_async_call(test_auth_nation_BETA.send_rmb(test_auth_nation.region, 'Circle CI: Automated Test'))     
+        except Exception as Err:
+            self.fail(Err)
 
     def test_telegram_send(self):
         from datetime import datetime

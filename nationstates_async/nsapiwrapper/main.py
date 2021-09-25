@@ -18,7 +18,6 @@ class Api:
         max_safe_requests=max_safe_requests,
         ratelimit_enabled=True,
         use_session=True,
-        limit_request=True,
         max_ongoing_requests=max_ongoing_requests):
         self.user_agent = user_agent
         self.version = version
@@ -38,9 +37,8 @@ class Api:
             self.session = None
         self.xrls = 0
         self.rlobj = RateLimit()
-        self.increment_lock = asyncio.Lock()
         self.ratelimit_lock = asyncio.Lock()
-        self.limit_request = limit_request
+        self.limit_request = False
         self.__activerequests__ = 0
 
     def increment_tracker(self):
@@ -64,7 +62,7 @@ class Api:
 
     async def check_ratelimit(self):
         "Check's the ratelimit"
-        rlflag = self._check_ratelimit()
+        rlflag = await self._check_ratelimit()
         if not self.ratelimit_enabled:
             return True
         # Get other async operations a chance to aquire the lock
@@ -72,7 +70,7 @@ class Api:
         if not rlflag:
             if self.ratelimitsleep:
                 n = 0
-                while not self._check_ratelimit():
+                while not await self._check_ratelimit():
                     n = n + 1
                     if n >= self.ratelimitsleep_maxsleeps:
                         if self.max_safe_requests > self.ratelimit_max:
@@ -91,14 +89,13 @@ class Api:
         while self.__activerequests__ >= self.max_ongoing_requests:
             # if the user bursts 40+ requests
             # we can't just allow it
-            await asyncio.sleep(0.05)
-        async with self.increment_lock:
-            self.increment_tracker()
+            await asyncio.sleep(0.1)
+        self.increment_tracker()
 
     async def __aexit__(self, *args, **kwargs):
-        # aexit isn't really async dependent but we got to do something
-        async with self.increment_lock:
-            self.decrement_tracker()
+        # aexit isn't really async dependent but we want to keep the with syntax
+        await asyncio.sleep(0)
+        self.decrement_tracker()
 
     def Nation(self, name):
         return NationAPI(name, self)

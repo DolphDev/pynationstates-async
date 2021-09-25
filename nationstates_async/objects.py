@@ -6,7 +6,7 @@ from xml.parsers.expat import ExpatError
 import html
 from functools import wraps
 
-from .exceptions import ConflictError, InternalServerError, CloudflareServerError, APIUsageError, NotAuthenticated
+from .exceptions import ConflictError, InternalServerError, CloudflareServerError, APIUsageError, NotAuthenticated, NotFound
 from .info import nation_shards, region_shards, world_shards, wa_shards, individual_cards_shards
 
 import aiohttp

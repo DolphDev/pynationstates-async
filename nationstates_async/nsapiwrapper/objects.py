@@ -10,21 +10,6 @@ import asyncio
 import aiohttp
 
 
-class DummyLock():
-    # Dummy Lock, does nothing
-
-    async def __aenter__(self, *args, **kwargs):
-        pass
-
-    async def __aexit__(self, *args, **kwargs):
-        pass
-
-class Lock:
-    RateLimitStateEditLock = asyncio.Lock()
-    HandleResponseLock = asyncio.Lock()
-    TrawlerLock = asyncio.Lock()
-    TrawlerLockDisabled = DummyLock()
-
 def response_check(data):
     def xmlsoup():
         return BeautifulSoup(data["xml"], "html.parser")
@@ -248,20 +233,17 @@ class NationstatesAPI:
     async def _request_api(self, req):
         # Since it's possible to burst requests, we have to mark the request
         # before it's sent instead of after
-        lock = Lock.TrawlerLock if req.trawler_lock or self.api_mother.limit_request else Lock.TrawlerLockDisabled
-        async with lock:
-
-            await self.api_mother.rlobj.add_timestamp()
-            await self.api_mother.check_ratelimit()
-            headers = {"User-Agent":self.api_mother.user_agent}
-            headers.update(req.custom_headers)
-            sess = self.api_mother.session if  self.api_mother.use_session else requests
-            if req.use_post:
-                resp =  await self._request_wrap_post(req.url, headers, req.post_data)
-                return resp
-            else:
-                resp =  await self._request_wrap_get(req.url, headers)
-                return resp
+        await self.api_mother.rlobj.add_timestamp()
+        await self.api_mother.check_ratelimit()
+        headers = {"User-Agent":self.api_mother.user_agent}
+        headers.update(req.custom_headers)
+        sess = self.api_mother.session if  self.api_mother.use_session else requests
+        if req.use_post:
+            resp =  await self._request_wrap_post(req.url, headers, req.post_data)
+            return resp
+        else:
+            resp =  await self._request_wrap_get(req.url, headers)
+            return resp
 
 
     async def _handle_request(self, response, request_meta):
